@@ -77,8 +77,15 @@ jobs:
           kubectl kustomize build/k8s > build/manifests.yaml
 
       - name: Deploy
+        env:
+          READINGLIST_DB_DSN: ${{ secrets.READINGLIST_DB_DSN }}
         run: |
+          [ -n "$READINGLIST_DB_DSN" ] || { echo "::error::GitHub secret READINGLIST_DB_DSN is not set on this repository."; exit 1; }
           aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+          # The namespace must exist before the Secret does; the Secret must exist before the pods start.
+          kubectl apply -f build/k8s/namespace.yaml
+          kubectl -n "$NAMESPACE" create secret generic jaik-io-api-db --from-literal=dsn="$READINGLIST_DB_DSN" \
+            --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f build/manifests.yaml
           kubectl -n "$NAMESPACE" rollout status deployment/"$APP" --timeout=300s
           echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"

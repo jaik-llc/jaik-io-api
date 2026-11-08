@@ -39,6 +39,13 @@ spec:
               value: "8080"
             - name: ENV
               value: prod
+            # PostgreSQL connection string. The Deploy workflow creates this Secret from the GitHub
+            # repository secret READINGLIST_DB_DSN; the value is never stored in the repository.
+            - name: READINGLIST_DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: jaik-io-api-db
+                  key: dsn
           resources:
             requests:
               cpu: 50m

@@ -8,6 +8,7 @@ func (app *application) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", http.NotFound)
 	mux.HandleFunc("GET /healthz", app.healthcheck)
+	mux.HandleFunc("GET /healthcheck/db", app.dbHealthcheck)
 
 	// api.jaik.io/books
 	mux.HandleFunc("GET /books", app.listBooks)

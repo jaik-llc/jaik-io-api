@@ -2,7 +2,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,6 +24,24 @@ func (app *application) healthcheck(w http.ResponseWriter, _ *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(append(js, '\n'))
+}
+
+// dbHealthcheck verifies the database connection. It answers 200 with the JSON body true when the
+// database responds, and 401 with false when it cannot be reached. It is deliberately not used by
+// the Kubernetes probes: a database outage must not restart the pods.
+func (app *application) dbHealthcheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	status, ok := http.StatusOK, true
+	if err := app.models.Ping(ctx); err != nil {
+		app.logger.Printf("database healthcheck failed: %v", err)
+		status, ok = http.StatusUnauthorized, false
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintln(w, ok)
 }
 
 func (app *application) serverError(w http.ResponseWriter, err error) {
