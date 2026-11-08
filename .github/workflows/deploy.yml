@@ -1,0 +1,95 @@
+name: Deploy
+
+# Rolls an image that CI already pushed out to the jaik-llc EKS cluster.
+# Runs on its own after CI succeeds on develop, or by hand with a specific image tag.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to deploy (a commit SHA that CI pushed). Empty deploys the current develop commit.
+        required: false
+        default: ''
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-2
+  CLUSTER_NAME: jaik-llc          # platform stacks live in jaik-llc/jaik-llc-infra
+  APP: jaik-io-api
+  ECR_REPOSITORY: jaik-io-api
+  NAMESPACE: jaik-io-api
+  TLS_STACK: jaik-llc-io-tls  # CertificateArn output, once the certificate has validated
+  HEALTH_URL: https://api.jaik.io/healthz
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve the image tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          [ -z "$TAG" ] && TAG="${{ github.event.workflow_run.head_sha }}"
+          [ -z "$TAG" ] && TAG="${{ github.sha }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying $ECR_REPOSITORY:$TAG"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}   # manifests from the same commit as the image
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check the image exists in ECR
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          aws ecr describe-images --repository-name "$ECR_REPOSITORY" --image-ids imageTag="$TAG" --query 'imageDetails[0].imagePushedAt' --output text \
+            || { echo "::error::No image $ECR_REPOSITORY:$TAG in ECR. Run CI for that commit first."; exit 1; }
+
+      - name: Render manifests
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          CERT=$(aws cloudformation describe-stacks --stack-name "$TLS_STACK" --query "Stacks[0].Outputs[?OutputKey=='CertificateArn'].OutputValue" --output text 2>/dev/null || true)
+          rm -rf build/k8s && mkdir -p build && cp -r k8s build/k8s
+          sed -i "s#newName: .*#newName: 642328613133.dkr.ecr.us-east-2.amazonaws.com/$ECR_REPOSITORY#; s#newTag: .*#newTag: \"$TAG\"#" build/k8s/kustomization.yaml
+          if [ -n "$CERT" ] && [ "$CERT" != "None" ]; then
+            sed -i "s#CERTIFICATE_ARN#$CERT#" build/k8s/ingress.yaml
+            echo "Serving HTTPS with $CERT"
+          else
+            sed -i '/certificate-arn/d; /ssl-redirect/d; /ssl-policy/d; s#listen-ports: .*#listen-ports: '"'"'[{"HTTP": 80}]'"'"'#' build/k8s/ingress.yaml
+            echo "No certificate in stack $TLS_STACK yet: serving HTTP only"
+          fi
+          kubectl kustomize build/k8s > build/manifests.yaml
+
+      - name: Deploy
+        run: |
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+          kubectl apply -f build/manifests.yaml
+          kubectl -n "$NAMESPACE" rollout status deployment/"$APP" --timeout=300s
+          echo "### Deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "Image: \`$ECR_REPOSITORY:${{ steps.tag.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # api.jaik.io is a CNAME at GoDaddy pointing at the shared load balancer (one-time manual record),
+      # so this only confirms the new pods answer through it.
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 10 "$HEALTH_URL" >/dev/null; then echo "$HEALTH_URL ok"; echo "Health: \`$HEALTH_URL\` ok" >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+            sleep 10
+          done
+          echo "::error::$HEALTH_URL did not answer 200 within 5 minutes"; exit 1

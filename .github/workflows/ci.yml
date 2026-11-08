@@ -1,0 +1,67 @@
+name: CI
+
+# Pull requests: vet, lint, test and build. Pushes to develop: the same, then build the container image and
+# push it to ECR tagged with the commit SHA and "latest". The Deploy workflow runs only after this one succeeds
+# on develop, so a failing test never reaches the cluster.
+on:
+  pull_request:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: jaik-io-api
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - run: go vet ./...
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+      - name: Test
+        run: go test -race -count=1 ./...
+      - name: Build
+        run: CGO_ENABLED=0 go build -trimpath -o bin/api ./cmd/api
+
+      - name: Configure AWS credentials (OIDC)
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        if: github.event_name != 'pull_request'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        if: github.event_name != 'pull_request'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$TAG" -t "$REGISTRY/$ECR_REPOSITORY:latest" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$TAG"
+          docker push "$REGISTRY/$ECR_REPOSITORY:latest"
+          echo "### Image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$REGISTRY/$ECR_REPOSITORY:$TAG\`" >> "$GITHUB_STEP_SUMMARY"

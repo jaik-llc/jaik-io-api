@@ -1,0 +1,10 @@
+.git
+.github
+.aiorg
+.worktrees
+k8s
+bin
+dist
+*.md
+.golangci.yml
+.env*
