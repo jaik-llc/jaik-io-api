@@ -53,7 +53,7 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// sql.Open does not connect. Ping once so a bad DSN shows up in the logs at startup, but keep
 	// serving: /healthcheck/db reports the database state and the pool reconnects on its own.
