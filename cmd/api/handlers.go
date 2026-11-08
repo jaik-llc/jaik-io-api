@@ -1,3 +1,4 @@
+// Command api serves the jaik.io HTTP API (api.jaik.io).
 package main
 
 import (
