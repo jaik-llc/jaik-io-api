@@ -1,0 +1,29 @@
+# Joins the shared "jaik-apps" load balancer (the "alb" IngressClass). All of api.jaik.io goes to this
+# service; the app itself decides which paths exist (/books today), so adding an endpoint is a code
+# change in cmd/api/routes.go, not an ingress change.
+# The deploy workflow replaces CERTIFICATE_ARN with the ACM certificate from the jaik-llc-io-tls stack.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jaik-io-api
+  namespace: jaik-io-api
+  annotations:
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /healthz
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: CERTIFICATE_ARN
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+spec:
+  ingressClassName: alb
+  rules:
+    - host: api.jaik.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: jaik-io-api
+                port:
+                  name: http
