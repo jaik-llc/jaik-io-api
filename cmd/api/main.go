@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -48,6 +49,13 @@ func main() {
 		env:  envOr("ENV", "dev"),
 		dsn:  os.Getenv("READINGLIST_DB_DSN"),
 	}
+
+	flag.IntVar(&cfg.port, "port", cfg.port, "API server port")
+	flag.StringVar(&cfg.env, "env", cfg.env, "Environment (dev|stage|prod)")
+	flag.StringVar(&cfg.dsn, "db-dsn", cfg.dsn, "PostgreSQL DSN")
+	flag.Parse()
+
+	logger.Printf("DSN loaded: %q", cfg.dsn)
 
 	db, err := sql.Open("postgres", cfg.dsn)
 	if err != nil {
