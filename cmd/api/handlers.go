@@ -72,11 +72,12 @@ func sampleBook(id int64) data.Book {
 }
 
 func (app *application) listBooks(w http.ResponseWriter, _ *http.Request) {
-	books := []data.Book{
-		{ID: 1, CreatedAt: time.Now(), Title: "The Darkening of Tristram", Published: 1998, Pages: 300, Genres: []string{"Fiction", "Thriller"}, Rating: 4.5, Version: 1},
-		{ID: 2, CreatedAt: time.Now(), Title: "The Legecy of Deckard Cain", Published: 2007, Pages: 432, Genres: []string{"Fiction", "Adventure"}, Rating: 4.9, Version: 1},
-		{ID: 3, CreatedAt: time.Now(), Title: "The Black Soulstone", Version: 1},
+	books, err := app.models.Books.GetAll()
+	if err != nil {
+		app.serverError(w, err)
+		return
 	}
+
 	if err := app.writeJSON(w, http.StatusOK, envelope{"books": books}); err != nil {
 		app.serverError(w, err)
 	}
@@ -90,11 +91,36 @@ func (app *application) createBook(w http.ResponseWriter, r *http.Request) {
 		Genres    []string `json:"genres"`
 		Rating    float32  `json:"rating"`
 	}
+
 	if err := app.readJSON(w, r, &input); err != nil {
 		badRequest(w)
 		return
 	}
-	if err := app.writeJSON(w, http.StatusCreated, envelope{"book": input}); err != nil {
+
+	if input.Title == "" {
+		badRequest(w)
+		return
+	}
+
+	if input.Genres == nil {
+		input.Genres = []string{}
+	}
+
+	book := &data.Book{
+		Title:     input.Title,
+		Published: input.Published,
+		Pages:     input.Pages,
+		Genres:    input.Genres,
+		Rating:    input.Rating,
+	}
+
+	err := app.models.Books.Insert(book)
+	if err != nil {
+		app.serverError(w, err)
+		return
+	}
+
+	if err := app.writeJSON(w, http.StatusCreated, envelope{"book": book}); err != nil {
 		app.serverError(w, err)
 	}
 }
@@ -105,7 +131,19 @@ func (app *application) getBook(w http.ResponseWriter, r *http.Request) {
 		badRequest(w)
 		return
 	}
-	if err := app.writeJSON(w, http.StatusOK, envelope{"book": sampleBook(id)}); err != nil {
+
+	book, err := app.models.Books.Get(id)
+	if err != nil {
+		if err == data.ErrRecordNotFound {
+			http.Error(w, "book not found", http.StatusNotFound)
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, envelope{"book": book}); err != nil {
 		app.serverError(w, err)
 	}
 }
@@ -117,20 +155,34 @@ func (app *application) updateBook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var input struct {
-		Title     *string  `json:"title"`
-		Published *int     `json:"published"`
-		Pages     *int     `json:"pages"`
-		Genres    []string `json:"genres"`
-		Rating    *float32 `json:"rating"`
+	book, err := app.models.Books.Get(id)
+	if err != nil {
+		if err == data.ErrRecordNotFound {
+			http.Error(w, "book not found", http.StatusNotFound)
+			return
+		}
+		app.serverError(w, err)
+		return
 	}
+
+	var input struct {
+		Title     *string   `json:"title"`
+		Published *int      `json:"published"`
+		Pages     *int      `json:"pages"`
+		Genres    *[]string `json:"genres"`
+		Rating    *float32  `json:"rating"`
+	}
+
 	if err := app.readJSON(w, r, &input); err != nil {
 		badRequest(w)
 		return
 	}
 
-	book := sampleBook(id)
 	if input.Title != nil {
+		if *input.Title == "" {
+			badRequest(w)
+			return
+		}
 		book.Title = *input.Title
 	}
 	if input.Published != nil {
@@ -139,11 +191,20 @@ func (app *application) updateBook(w http.ResponseWriter, r *http.Request) {
 	if input.Pages != nil {
 		book.Pages = *input.Pages
 	}
-	if len(input.Genres) > 0 {
-		book.Genres = input.Genres
+	if input.Genres != nil {
+		book.Genres = *input.Genres
 	}
 	if input.Rating != nil {
 		book.Rating = *input.Rating
+	}
+
+	if err := app.models.Books.Update(book); err != nil {
+		if err == data.ErrRecordNotFound {
+			http.Error(w, "book not found", http.StatusNotFound)
+			return
+		}
+		app.serverError(w, err)
+		return
 	}
 
 	if err := app.writeJSON(w, http.StatusOK, envelope{"book": book}); err != nil {
@@ -157,7 +218,21 @@ func (app *application) deleteBook(w http.ResponseWriter, r *http.Request) {
 		badRequest(w)
 		return
 	}
-	if err := app.writeJSON(w, http.StatusOK, envelope{"message": "deleted book " + strconv.FormatInt(id, 10)}); err != nil {
+
+	err = app.models.Books.Delete(id)
+	if err != nil {
+		if err == data.ErrRecordNotFound {
+			http.Error(w, "book not found", http.StatusNotFound)
+			return
+		}
+
+		app.serverError(w, err)
+		return
+	}
+
+	if err := app.writeJSON(w, http.StatusOK, envelope{
+		"message": "deleted book " + strconv.FormatInt(id, 10),
+	}); err != nil {
 		app.serverError(w, err)
 	}
 }
