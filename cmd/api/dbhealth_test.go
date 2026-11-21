@@ -44,6 +44,7 @@ func TestDBHealthcheck(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = db.Close() })
 			return data.NewModels(db)
 		}, 200, "true"},
 		{"database down", func(t *testing.T) data.Models {
@@ -51,13 +52,14 @@ func TestDBHealthcheck(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(func() { _ = db.Close() })
 			return data.NewModels(db)
 		}, 401, "false"},
 		{"no database configured", func(*testing.T) data.Models { return data.Models{} }, 401, "false"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			app := newTestApp()
+			app := newTestApp(t)
 			app.models = tc.models(t)
 			rec := httptest.NewRecorder()
 			app.routes().ServeHTTP(rec, httptest.NewRequest("GET", "/healthcheck/db", nil))

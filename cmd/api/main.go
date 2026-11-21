@@ -43,6 +43,9 @@ func main() {
 	}
 	// The connection string comes from the environment (a Kubernetes Secret in production),
 	// never from source code.
+	if os.Getenv("READINGLIST_DB_DSN") == "" {
+		logger.Fatal("READINGLIST_DB_DSN must be set")
+	}
 	cfg := config{
 		port: port,
 		env:  envOr("ENV", "dev"),
